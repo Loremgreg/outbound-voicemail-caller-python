@@ -18,6 +18,15 @@ It can use a pipeline of STT, LLM, and TTS models, or a realtime speech-to-speec
 
 This example builds on concepts from the [Outbound Calls](https://docs.livekit.io/agents/start/telephony/#outbound-calls) section of the docs. Ensure that a SIP outbound trunk is configured before proceeding.
 
+## Résumé des modifications
+
+1.  **Simplifié l'Agent**: La classe `OutboundCaller` a été allégée. Le prompt a été réécrit pour se concentrer sur la classification de texte.
+2.  **Retiré le TTS**: L'agent n'a plus besoin de parler, donc le service Text-to-Speech (Cartesia) a été enlevé.
+3.  **Adapté le LLM**: Le LLM (OpenAI) n'est plus utilisé pour une conversation en temps réel, mais pour une tâche d'analyse post-appel.
+4.  **Modifié la Logique d'Appel**: Le point d'entrée a été entièrement revu pour écouter l'appel, accumuler la transcription du message vocal, et lancer la classification par le LLM une fois que l'appelant a raccroché.
+
+Votre agent est maintenant configuré pour appeler un numéro, enregistrer et transcrire le message vocal, puis le classifier automatiquement.
+
 ## Features
 
 This example demonstrates the following features:
