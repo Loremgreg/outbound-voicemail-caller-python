@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import datetime
 from dotenv import load_dotenv
 import json
 import os
@@ -70,11 +71,25 @@ class OutboundCaller(Agent):
 
             logger.info(f"Voicemail classified as: {classification}")
 
-            # Here you could add logic to save the transcript and classification
-            # to a database, send a notification, etc.
+            # On s'assure que la classification n'est pas vide avant de sauvegarder
+            if classification:
+                timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                log_entry = (
+                    f"--- Voicemail Received: {timestamp} ---\n"
+                    f"Classification: {classification}\n"
+                    f"Transcript: {self.full_transcript.strip()}\n"
+                    f"------------------------------------------\n\n"
+                )
+                
+                # On ajoute l'entrée au fichier "voicemail_log.txt"
+                with open("voicemail_log.txt", "a", encoding="utf-8") as f:
+                    f.write(log_entry)
+                
+                logger.info("Voicemail and classification saved to voicemail_log.txt")
 
         finally:
             session.stop()
+
 
 
 async def entrypoint(ctx: JobContext):
