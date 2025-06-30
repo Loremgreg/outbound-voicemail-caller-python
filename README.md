@@ -2,7 +2,7 @@
   <img src="./.github/assets/livekit-mark.png" alt="LiveKit logo" width="100" height="100">
 </a>
 
-# Python Outbound Call Agent
+# Python Outbound Voicemail Classifier
 
 <p>
   <a href="https://docs.livekit.io/agents/overview/">LiveKit Agents Docs</a>
@@ -12,31 +12,19 @@
   <a href="https://blog.livekit.io/">Blog</a>
 </p>
 
-This example demonstrates an full workflow of an AI agent that makes outbound calls. It uses LiveKit SIP and Python [Agents Framework](https://github.com/livekit/agents).
+This example demonstrates an AI agent that automatically calls a voicemail service, transcribes the messages, classifies them using an LLM, and saves the results. It uses LiveKit SIP for outbound calls and the Python Agents Framework.
 
-It can use a pipeline of STT, LLM, and TTS models, or a realtime speech-to-speech model. (such as ones from OpenAI and Gemini).
+This example is built for a post-call analysis workflow, not for real-time conversation.
 
-This example builds on concepts from the [Outbound Calls](https://docs.livekit.io/agents/start/telephony/#outbound-calls) section of the docs. Ensure that a SIP outbound trunk is configured before proceeding.
+## How It Works
 
-## Résumé des modifications
+The agent's workflow is as follows:
 
-1.  **Simplifié l'Agent**: La classe `OutboundCaller` a été allégée. Le prompt a été réécrit pour se concentrer sur la classification de texte.
-2.  **Retiré le TTS**: L'agent n'a plus besoin de parler, donc le service Text-to-Speech (Cartesia) a été enlevé.
-3.  **Adapté le LLM**: Le LLM (OpenAI) n'est plus utilisé pour une conversation en temps réel, mais pour une tâche d'analyse post-appel.
-4.  **Modifié la Logique d'Appel**: Le point d'entrée a été entièrement revu pour écouter l'appel, accumuler la transcription du message vocal, et lancer la classification par le LLM une fois que l'appelant a raccroché.
-
-Votre agent est maintenant configuré pour appeler un numéro, enregistrer et transcrire le message vocal, puis le classifier automatiquement.
-
-## Features
-
-This example demonstrates the following features:
-
-- Making outbound calls
-- Detecting voicemail
-- Looking up availability via function calling
-- Transferring to a human operator
-- Detecting intent to end the call
-- Uses Krisp background voice cancellation to handle noisy environments
+1.  **Dispatch**: The agent is triggered via a dispatch command, receiving the phone number of the voicemail service to call.
+2.  **Outbound Call**: It uses a LiveKit SIP Trunk to place an outbound call to the specified number.
+3.  **Listen & Transcribe**: Once the call is connected, the agent listens to the audio stream (the recorded voicemail message being played back). It uses Deepgram to transcribe the speech into text in real-time.
+4.  **Post-Call Analysis**: After the call ends, the agent sends the complete transcript to an OpenAI LLM (e.g., GPT-4o) for classification. The LLM categorizes the message based on predefined instructions (e.g., `PRISE_RDV`, `ANNULATION_RDV`).
+5.  **Save Results**: The agent saves the classification and the full transcript to a local file named `voicemail_log.txt` for permanent record-keeping.
 
 ## Dev Setup
 
@@ -58,24 +46,27 @@ Set up the environment by copying `.env.example` to `.env.local` and filling in 
 - `LIVEKIT_API_SECRET`
 - `OPENAI_API_KEY`
 - `SIP_OUTBOUND_TRUNK_ID`
-- `DEEPGRAM_API_KEY` - optional, only needed when using pipelined models
-- `CARTESIA_API_KEY` - optional, only needed when using pipelined models
+- `DEEPGRAM_API_KEY`
 
-Run the agent:
+Run the agent worker:
 
 ```shell
 python3 agent.py dev
 ```
 
-Now, your worker is running, and waiting for dispatches in order to make outbound calls.
+Now, your worker is running and waiting for dispatch jobs to make outbound calls.
 
 ### Making a call
 
-You can dispatch an agent to make a call by using the `lk` CLI:
+You can dispatch an agent to call a voicemail service by using the `lk` CLI. The `phone_number` in the metadata should be the number of the voicemail box you want the agent to check.
 
 ```shell
 lk dispatch create \
   --new-room \
   --agent-name outbound-caller \
-  --metadata '{"phone_number": "+1234567890", "transfer_to": "+9876543210}'
+  --metadata '{"phone_number": "+1234567890"}'
+```
+
+After the call, check the `voicemail_log.txt` file in the project's root directory for the classified transcript.
+
 ```
