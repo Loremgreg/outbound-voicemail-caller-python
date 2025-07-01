@@ -2,7 +2,7 @@
   <img src="./.github/assets/livekit-mark.png" alt="LiveKit logo" width="100" height="100">
 </a>
 
-# Python Outbound Voicemail Classifier
+# Python Outbound Voicemail Caller
 
 <p>
   <a href="https://docs.livekit.io/agents/overview/">LiveKit Agents Docs</a>
