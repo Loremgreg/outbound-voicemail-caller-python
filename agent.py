@@ -13,25 +13,41 @@ from livekit.agents import (
     AgentSession,
     Agent,
     JobContext,
-    function_tool,
-    RunContext,
-    get_job_context,
     cli,
     WorkerOptions,
-    RoomInputOptions,
 )
 from livekit.plugins import (
     deepgram,
     openai,
 )
 
-
-# load environment variables, this is optional, only used for local development
+# Charger les variables d'environnement
 load_dotenv(dotenv_path=".env.local")
 logger = logging.getLogger("outbound-caller")
 logger.setLevel(logging.INFO)
 
+# Récupérer les configurations depuis les variables d'environnement
 outbound_trunk_id = os.getenv("SIP_OUTBOUND_TRUNK_ID")
+# Il est recommandé de gérer les informations sensibles comme les codes PIN via des variables d'environnement
+PIN_CODE = os.getenv("VOICEMAIL_PIN", "1234")
+
+
+# --- Fonctions pour la navigation DTMF ---
+
+async def send_dtmf_sequence(room: rtc.Room, sequence: str):
+    """
+    Envoie une séquence de tonalités DTMF.
+    """
+    for char in sequence:
+        # Les chiffres 0-9 ont leur propre valeur, '*' est 10, '#' est 11.
+        code = int(char) if char.isdigit() else (10 if char == '*' else (11 if char == '#' else None))
+        if code is not None:
+            logger.info(f"Envoi DTMF: {char}")
+            await room.local_participant.publish_dtmf(code, char)
+            # Une pause est essentielle pour que le système distant traite chaque tonalité
+            await asyncio.sleep(0.5)
+        else:
+            logger.warning(f"Caractère DTMF non reconnu: {char}")
 
 
 class OutboundCaller(Agent):
@@ -52,26 +68,21 @@ class OutboundCaller(Agent):
         )
         self.full_transcript = ""
 
-
     async def _process_transcript(self, ctx: JobContext):
-        # Once the call is finished, we have the full transcript.
-        # We can now use the LLM to classify it.
-        logger.info(f"Full transcript: {self.full_transcript}")
+        # Une fois l'appel terminé, nous classifions la transcription complète.
+        if not self.full_transcript.strip():
+            logger.warning("La transcription est vide, aucune classification ne sera effectuée.")
+            return
 
-        # Create a new AgentSession just for this classification task
+        logger.info(f"Transcription complète: {self.full_transcript}")
         session = AgentSession(llm=openai.LLM(model="gpt-4o"))
         session.start()
         try:
-            # Add the full transcript to the chat history
             session.chat_history.add_user_message(self.full_transcript)
-
-            # Generate the classification
             classification_stream = await session.generate_reply(stream=False)
             classification = classification_stream.text
+            logger.info(f"Messagerie vocale classifiée comme: {classification}")
 
-            logger.info(f"Voicemail classified as: {classification}")
-
-            # On s'assure que la classification n'est pas vide avant de sauvegarder
             if classification:
                 timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 log_entry = (
@@ -80,32 +91,27 @@ class OutboundCaller(Agent):
                     f"Transcript: {self.full_transcript.strip()}\n"
                     f"------------------------------------------\n\n"
                 )
-                
-                # On ajoute l'entrée au fichier "voicemail_log.txt"
                 with open("voicemail_log.txt", "a", encoding="utf-8") as f:
                     f.write(log_entry)
-                
-                logger.info("Voicemail and classification saved to voicemail_log.txt")
-
+                logger.info("La messagerie et la classification ont été sauvegardées dans voicemail_log.txt")
         finally:
             session.stop()
 
 
-
 async def entrypoint(ctx: JobContext):
-    logger.info(f"connecting to room {ctx.room.name}")
+    logger.info(f"Connexion à la room {ctx.room.name}")
     await ctx.connect()
 
     dial_info = json.loads(ctx.job.metadata)
     participant_identity = phone_number = dial_info["phone_number"]
-
     agent = OutboundCaller()
 
-    stt = deepgram.STT(interim_results=False, endpointing=300)
+    # Activer les résultats intermédiaires pour une navigation de menu réactive
+    stt = deepgram.STT(interim_results=True, endpointing=300)
     stt_stream = stt.stream(room=ctx.room)
 
-    # Start dialing the user
     try:
+        # Lancer l'appel SIP
         sip_participant_task = asyncio.create_task(
             ctx.api.sip.create_sip_participant(
                 api.CreateSIPParticipantRequest(
@@ -119,43 +125,70 @@ async def entrypoint(ctx: JobContext):
         )
 
         participant = await ctx.wait_for_participant(identity=participant_identity)
-        logger.info(f"participant joined: {participant.identity}")
+        logger.info(f"Le participant a rejoint: {participant.identity}")
 
-        # Listen for transcription and participant disconnection
-        transcript_task = asyncio.create_task(_accumulate_transcript(stt_stream, agent))
+        # Écouter la transcription, naviguer dans le menu et attendre la déconnexion
+        stt_task = asyncio.create_task(_process_stt_and_navigate_menu(ctx, stt_stream, agent))
         disconnection_task = asyncio.create_task(ctx.wait_for_participant_disconnection(participant))
 
-        # Wait for either the participant to disconnect or the SIP call to fail
         await asyncio.wait([disconnection_task, sip_participant_task], return_when=asyncio.FIRST_COMPLETED)
 
-        # If the participant disconnected, the call was successful in some way
         if disconnection_task.done():
-            logger.info("Participant disconnected, processing transcript.")
-            # Allow some time for the final transcript to be processed
-            await asyncio.sleep(2)
-            transcript_task.cancel() # Stop accumulating transcript
+            logger.info("Le participant s'est déconnecté, traitement de la transcription.")
+            await asyncio.sleep(2)  # Laisser le temps pour la transcription finale
+            stt_task.cancel()
             await agent._process_transcript(ctx)
         else:
-            logger.error("SIP call failed or was not answered.")
-            transcript_task.cancel()
+            logger.error("L'appel SIP a échoué ou n'a pas reçu de réponse.")
+            stt_task.cancel()
 
     except api.TwirpError as e:
         logger.error(
-            f"error creating SIP participant: {e.message}, "
-            f"SIP status: {e.metadata.get('sip_status_code')} "
+            f"Erreur lors de la création du participant SIP: {e.message}, "
+            f"statut SIP: {e.metadata.get('sip_status_code')} "
             f"{e.metadata.get('sip_status')}"
         )
     finally:
-        logger.info("Shutting down.")
+        logger.info("Arrêt.")
         ctx.shutdown()
 
-async def _accumulate_transcript(stt_stream, agent):
+
+async def _process_stt_and_navigate_menu(ctx: JobContext, stt_stream: deepgram.STTStream, agent: OutboundCaller):
+    """
+    Traite le flux STT pour naviguer dans le menu et accumuler la transcription.
+    """
+    pin_sent = False
+    listen_command_sent = False
+    menu_navigation_finished = False
+
     async for event in stt_stream:
         if event.type == deepgram.STTEventType.TRANSCRIPT:
-            alternatives = event.transcript.alternatives
-            if alternatives and alternatives[0].transcript:
-                agent.full_transcript += alternatives[0].transcript + " "
+            transcript = event.transcript.alternatives[0].transcript.lower()
 
+            # 1. Logique de navigation dans le menu (utilise les transcriptions intermédiaires)
+            if not menu_navigation_finished:
+                logger.info(f"Menu-Transcript: {transcript}")
+
+                # Étape 1: Détecter la demande de PIN
+                if not pin_sent and any(keyword in transcript for keyword in ["code", "pin", "password", "mot de passe"]):
+                    logger.info("Demande de code PIN détectée. Envoi du code.")
+                    await send_dtmf_sequence(ctx.room, PIN_CODE + "#")
+                    pin_sent = True
+                    await asyncio.sleep(1)
+
+                # Étape 2: Détecter la commande d'écoute
+                if pin_sent and not listen_command_sent and "pour écouter" in transcript:
+                    logger.info("Commande d'écoute détectée. Envoi de la touche '1'.")
+                    await send_dtmf_sequence(ctx.room, "1")
+                    listen_command_sent = True
+
+                if pin_sent and listen_command_sent:
+                    logger.info("Navigation du menu terminée. Prêt à écouter le message.")
+                    menu_navigation_finished = True
+
+            # 2. Accumuler la transcription finale du message
+            if event.transcript.is_final and event.transcript.alternatives[0].transcript:
+                agent.full_transcript += event.transcript.alternatives[0].transcript + " "
 
 
 if __name__ == "__main__":
