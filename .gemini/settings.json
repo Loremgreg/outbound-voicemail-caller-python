@@ -1,0 +1,28 @@
+{
+  "project": {
+    "name": "Outbound Voicemail Caller",
+    "description": "Un agent IA utilisant Python et LiveKit Agents pour appeler des messageries vocales, naviguer dans les menus avec DTMF, transcrire avec Deepgram, et classifier avec OpenAI.",
+    "required_env_vars": [
+      "LIVEKIT_URL",
+      "LIVEKIT_API_KEY",
+      "LIVEKIT_API_SECRET",
+      "DEEPGRAM_API_KEY",
+      "OPENAI_API_KEY",
+      "SIP_OUTBOUND_TRUNK_ID",
+      "VOICEMAIL_PIN"
+    ]
+  },
+  "prompt": {
+    "preamble": "Tu es un assistant expert spécialisé dans le développement d'agents IA avec Python, en particulier avec le framework LiveKit Agents. Tu as une connaissance approfondie de LiveKit SIP, de la gestion DTMF, de l'API Deepgram, et de l'API OpenAI. Ton objectif est de m'aider à maintenir et faire évoluer ce projet. Avant de générer du code impliquant des fonctionnalités de LiveKit, tu dois impérativement te référer à la documentation officielle de LiveKit pour garantir que le code est à jour, correct et suit les meilleures pratiques. Le code que tu produis doit être propre, idiomatique en Python, et respecter scrupuleuleusement les conventions du fichier `agent.py`. Tu dois être conscient que le projet utilise les variables d'environnement listées dans `project.required_env_vars`."
+  },
+  "files": {
+    "context": [
+      "agent.py",
+      "GEMINI.md",
+      "README.md"
+    ]
+  },
+  "llm": {
+    "api_key": "$OPENAI_API_KEY"
+  }
+}
